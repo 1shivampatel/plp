@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interactive Neural Combinatorics Lab</title>
+  <style>
+    :root {
+      --bg: #070a12;
+      --card: #111827;
+      --accent: #38bdf8;
+      --node-perm: #f43f5e;
+      --node-comb: #3b82f6;
+      --text: #f8fafc;
+      --border: #1f2937;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; user-select: none; }
+    body { background-color: var(--bg); color: var(--text); padding: 15px; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+    .header { text-align: center; margin-bottom: 10px; }
+    .header h1 { font-size: 1.6rem; color: var(--accent); letter-spacing: 0.5px; }
+    .header p { color: #9ca3af; font-size: 0.85rem; }
+
+    .main-container { display: flex; flex: 1; gap: 15px; height: calc(100vh - 85px); }
+
+    /* Control Sidebar */
+    .sidebar { width: 310px; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 16px; z-index: 10; }
+    .control-group { display: flex; flex-direction: column; gap: 6px; }
+    .control-group label { font-size: 0.85rem; font-weight: 600; display: flex; justify-content: space-between; }
+    input[type="range"] { accent-color: var(--accent); width: 100%; cursor: pointer; }
+
+    .mode-selector { display: flex; gap: 8px; margin-top: 4px; }
+    .btn { flex: 1; padding: 10px 6px; border: 1px solid var(--border); background: #1f2937; color: white; border-radius: 8px; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: all 0.2s; }
+    .btn:hover { background: #374151; }
+    .btn.active-perm { background: var(--node-perm); border-color: var(--node-perm); }
+    .btn.active-comb { background: var(--node-comb); border-color: var(--node-comb); }
+
+    .stats { background: #0b0f19; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-size: 0.85rem; }
+    .stats div { margin-bottom: 6px; display: flex; justify-content: space-between; }
+    .stats div:last-child { margin-bottom: 0; }
+    .stats span { font-weight: bold; font-family: monospace; }
+
+    .toolbar-btn { background: var(--accent); color: #000; border: none; padding: 10px; border-radius: 8px; font-weight: bold; cursor: pointer; transition: opacity 0.2s; }
+    .toolbar-btn:hover { opacity: 0.9; }
+
+    /* Interactive Graph Canvas */
+    .graph-container { flex: 1; background: var(--card); border: 1px solid var(--border); border-radius: 12px; position: relative; overflow: hidden; cursor: grab; }
+    .graph-container:active { cursor: grabbing; }
+    canvas { width: 100%; height: 100%; display: block; }
+
+    /* Canvas Overlays */
+    .controls-hint { position: absolute; top: 12px; right: 12px; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(4px); padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border); font-size: 0.75rem; color: #9ca3af; pointer-events: none; }
+    .legend { position: absolute; bottom: 12px; left: 12px; background: rgba(11, 15, 25, 0.85); backdrop-filter: blur(4px); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); font-size: 0.75rem; pointer-events: none; }
+    .legend-item { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+    .legend-item:last-child { margin-bottom: 0; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+    .tooltip { position: absolute; background: rgba(15, 23, 42, 0.95); border: 1px solid var(--accent); color: white; padding: 6px 10px; border-radius: 6px; font-size: 0.8rem; pointer-events: none; font-family: monospace; display: none; transform: translate(-50%, -120%); z-index: 20; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <h1>Interactive Neural Combinatorics Simulator</h1>
+    <p>Zoom, pan, click nodes, and drag pathways to explore decision tree expansion vs. layer pooling</p>
+  </div>
+
+  <div class="main-container">
+    <div class="sidebar">
+      <div class="control-group">
+        <label>Total Pool Items (n): <span id="val-n">4</span></label>
+        <input type="range" id="input-n" min="1" max="5" value="4">
+      </div>
+
+      <div class="control-group">
+        <label>Selection Steps (r): <span id="val-r">3</span></label>
+        <input type="range" id="input-r" min="1" max="4" value="3">
+      </div>
+
+      <div class="control-group">
+        <label>Graph Architecture</label>
+        <div class="mode-selector">
+          <button class="btn active-perm" id="btn-perm" onclick="setMode('perm')">Permutations<br>(Trees)</button>
+          <button class="btn" id="btn-comb" onclick="setMode('comb')">Combinations<br>(Network)</button>
+        </div>
+      </div>
+
+      <div class="stats">
+        <div>Network Layers: <span id="stat-layers">0</span></div>
+        <div>Total Neurons: <span id="stat-nodes">0</span></div>
+        <div>Synapses (Edges): <span id="stat-edges">0</span></div>
+        <div>Leaf Outcomes: <span id="stat-paths" style="color: var(--accent);">0</span></div>
+      </div>
+
+      <button class="toolbar-btn" onclick="fitToScreen()">Reset Camera & Fit Screen</button>
+
+      <div style="font-size: 0.75rem; color: #9ca3af; line-height: 1.4;">
+        💡 <b>Interactive Controls:</b><br>
+        • <b>Scroll Wheel / Pinch:</b> Zoom in & out<br>
+        • <b>Drag Canvas:</b> Pan around graph<br>
+        • <b>Click Node:</b> Trace & highlight active neural path<br>
+        • <b>Drag Node:</b> Custom node placement
+      </div>
+    </div>
+
+    <div class="graph-container" id="canvas-wrapper">
+      <canvas id="networkCanvas"></canvas>
+
+      <div class="controls-hint">Zoom: Scroll | Pan: Click & Drag | Select: Click Node</div>
+      <div class="tooltip" id="tooltip"></div>
+
+      <div class="legend">
+        <div class="legend-item"><div class="dot" style="background: var(--accent);"></div> Input Layer (Root)</div>
+        <div class="legend-item"><div class="dot" style="background: #a855f7;"></div> Hidden Decision Neurons</div>
+        <div class="legend-item"><div class="dot" style="background: #22c55e;"></div> Output Pathways (Leaf Outcomes)</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const labels = ['A', 'B', 'C', 'D', 'E'];
+    const canvas = document.getElementById('networkCanvas');
+    const ctx = canvas.getContext('2d');
+    const wrapper = document.getElementById('canvas-wrapper');
+    const tooltip = document.getElementById('tooltip');
+
+    let mode = 'perm';
+    let nodes = [];
+    let edges = [];
+    let particles = [];
+    let selectedNode = null;
+    let hoveredNode = null;
+    let draggedNode = null;
+
+    // Pan / Zoom Camera State
+    let transform = { x: 0, y: 0, scale: 1 };
+    let isPanning = false;
+    let startPan = { x: 0, y: 0 };
+
+    // Inputs
+    const inputN = document.getElementById('input-n');
+    const inputR = document.getElementById('input-r');
+    const valN = document.getElementById('val-n');
+    const valR = document.getElementById('val-r');
+    const btnPerm = document.getElementById('btn-perm');
+    const btnComb = document.getElementById('btn-comb');
+
+    function resizeCanvas() {
+      canvas.width = wrapper.clientWidth;
+      canvas.height = wrapper.clientHeight;
+      draw();
+    }
+    window.addEventListener('resize', resizeCanvas);
+
+    function setMode(m) {
+      mode = m;
+      btnPerm.className = mode === 'perm' ? 'btn active-perm' : 'btn';
+      btnComb.className = mode === 'comb' ? 'btn active-comb' : 'btn';
+      buildGraph();
+    }
+
+    inputN.addEventListener('input', () => {
+      if (parseInt(inputR.value) > parseInt(inputN.value)) {
+        inputR.value = inputN.value;
+      }
+      inputR.max = inputN.value;
+      buildGraph();
+    });
+
+    inputR.addEventListener('input', buildGraph);
+
+    function buildGraph() {
+      const n = parseInt(inputN.value);
+      const r = parseInt(inputR.value);
+      valN.textContent = n;
+      valR.textContent = r;
+
+      const availableItems = labels.slice(0, n);
+      nodes = [];
+      edges = [];
+      particles = [];
+      selectedNode = null;
+
+      let layers = [[{ id: 'root', label: 'Start', path: [] }]];
+
+      for (let step = 1; step <= r; step++) {
+        let currentLayer = [];
+        let prevLayer = layers[step - 1];
+
+        if (mode === 'perm') {
+          prevLayer.forEach(parent => {
+            availableItems.forEach(item => {
+              if (!parent.path.includes(item)) {
+                let newPath = [...parent.path, item];
+                let nodeObj = {
+                  id: newPath.join(''),
+                  label: newPath.join(''),
+                  path: newPath
+                };
+                currentLayer.push(nodeObj);
+                edges.push({ from: parent.id, to: nodeObj.id });
+              }
+            });
+          });
+        } else {
+          let nodeMap = new Map();
+          prevLayer.forEach(parent => {
+            availableItems.forEach(item => {
+              if (!parent.path.includes(item)) {
+                let newSet = [...parent.path, item].sort();
+                let key = newSet.join('');
+
+                if (!nodeMap.has(key)) {
+                  let nodeObj = {
+                    id: key,
+                    label: `{${newSet.join(',')}}`,
+                    path: newSet
+                  };
+                  nodeMap.set(key, nodeObj);
+                  currentLayer.push(nodeObj);
+                }
+                edges.push({ from: parent.id, to: key });
+              }
+            });
+          });
+        }
+        layers.push(currentLayer);
+      }
+
+      // Initial Base Positions
+      let allNodesMap = new Map();
+      layers.forEach((layer, lIdx) => {
+        layer.forEach((node, nIdx) => {
+          node.layer = lIdx;
+          node.x = lIdx * 220; // Default spacing before scaling
+          node.y = (nIdx - (layer.length - 1) / 2) * 60;
+          allNodesMap.set(node.id, node);
+          nodes.push(node);
+        });
+      });
+
+      // Link source & target
+      edges.forEach(e => {
+        e.source = allNodesMap.get(e.from);
+        e.target = allNodesMap.get(e.to);
+      });
+
+      // Generate Data Particles along synapses
+      edges.forEach(e => {
+        for (let i = 0; i < 2; i++) {
+          particles.push({
+            edge: e,
+            progress: Math.random(),
+            speed: 0.005 + Math.random() * 0.008
+          });
+        }
+      });
+
+      // Stats
+      document.getElementById('stat-layers').textContent = layers.length;
+      document.getElementById('stat-nodes').textContent = nodes.length;
+      document.getElementById('stat-edges').textContent = edges.length;
+      document.getElementById('stat-paths').textContent = layers[layers.length - 1].length;
+
+      fitToScreen();
+    }
+
+    // Camera Auto-Fit Logic (Prevents going off-screen)
+    function fitToScreen() {
+      if (nodes.length === 0) return;
+
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      nodes.forEach(node => {
+        if (node.x < minX) minX = node.x;
+        if (node.x > maxX) maxX = node.x;
+        if (node.y < minY) minY = node.y;
+        if (node.y > maxY) maxY = node.y;
+      });
+
+      const padding = 80;
+      const graphWidth = (maxX - minX) || 1;
+      const graphHeight = (maxY - minY) || 1;
+
+      const scaleX = (canvas.width - padding * 2) / graphWidth;
+      const scaleY = (canvas.height - padding * 2) / graphHeight;
+
+      transform.scale = Math.min(scaleX, scaleY, 1.2); // Cap zoom fit
+      transform.x = (canvas.width / 2) - ((minX + maxX) / 2) * transform.scale;
+      transform.y = (canvas.height / 2) - ((minY + maxY) / 2) * transform.scale;
+
+      draw();
+    }
+
+    // Convert Screen Coords to World Coords
+    function toWorldCoords(screenX, screenY) {
+      const rect = canvas.getBoundingClientRect();
+      const x = (screenX - rect.left - transform.x) / transform.scale;
+      const y = (screenY - rect.top - transform.y) / transform.scale;
+      return { x, y };
+    }
+
+    // Mouse & Touch Interactivity
+    wrapper.addEventListener('mousedown', (e) => {
+      const mouse = toWorldCoords(e.clientX, e.clientY);
+      draggedNode = nodes.find(n => Math.hypot(n.x - mouse.x, n.y - mouse.y) < 15);
+
+      if (draggedNode) {
+        selectedNode = draggedNode;
+      } else {
+        isPanning = true;
+        startPan = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+      }
+      draw();
+    });
+
+    window.addEventListener('mousemove', (e) => {
+      const mouse = toWorldCoords(e.clientX, e.clientY);
+
+      if (draggedNode) {
+        draggedNode.x = mouse.x;
+        draggedNode.y = mouse.y;
+        draw();
+        return;
+      }
+
+      if (isPanning) {
+        transform.x = e.clientX - startPan.x;
+        transform.y = e.clientY - startPan.y;
+        draw();
+        return;
+      }
+
+      // Hover Check
+      hoveredNode = nodes.find(n => Math.hypot(n.x - mouse.x, n.y - mouse.y) < 15);
+      if (hoveredNode) {
+        const rect = canvas.getBoundingClientRect();
+        tooltip.style.display = 'block';
+        tooltip.style.left = (e.clientX - rect.left) + 'px';
+        tooltip.style.top = (e.clientY - rect.top) + 'px';
+        tooltip.textContent = `Node: ${hoveredNode.label} | Layer: ${hoveredNode.layer}`;
+      } else {
+        tooltip.style.display = 'none';
+      }
+    });
+
+    window.addEventListener('mouseup', () => {
+      isPanning = false;
+      draggedNode = null;
+    });
+
+    wrapper.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9;
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      // Zoom towards cursor
+      transform.x = mouseX - (mouseX - transform.x) * zoomFactor;
+      transform.y = mouseY - (mouseY - transform.y) * zoomFactor;
+      transform.scale *= zoomFactor;
+
+      draw();
+    }, { passive: false });
+
+    // Path tracing for selected nodes
+    function getConnectedElements(selected) {
+      if (!selected) return { nodes: new Set(), edges: new Set() };
+      let activeNodes = new Set([selected.id]);
+      let activeEdges = new Set();
+
+      // Upstream trace (parents)
+      function traceUp(nodeId) {
+        edges.forEach(e => {
+          if (e.to === nodeId) {
+            activeEdges.add(e);
+            activeNodes.add(e.from);
+            traceUp(e.from);
+          }
+        });
+      }
+
+      // Downstream trace (children)
+      function traceDown(nodeId) {
+        edges.forEach(e => {
+          if (e.from === nodeId) {
+            activeEdges.add(e);
+            activeNodes.add(e.to);
+            traceDown(e.to);
+          }
+        });
+      }
+
+      traceUp(selected.id);
+      traceDown(selected.id);
+
+      return { nodes: activeNodes, edges: activeEdges };
+    }
+
+    // Main Rendering Loop
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      ctx.save();
+      ctx.translate(transform.x, transform.y);
+      ctx.scale(transform.scale, transform.scale);
+
+      const active = getConnectedElements(selectedNode);
+
+      // Draw Synapses / Edges
+      edges.forEach(e => {
+        if (!e.source || !e.target) return;
+        const isActive = active.edges.has(e);
+
+        ctx.beginPath();
+        ctx.moveTo(e.source.x, e.source.y);
+        const cpX = (e.source.x + e.target.x) / 2;
+        ctx.bezierCurveTo(cpX, e.source.y, cpX, e.target.y, e.target.x, e.target.y);
+
+        if (selectedNode) {
+          ctx.strokeStyle = isActive ? (mode === 'perm' ? '#f43f5e' : '#3b82f6') : 'rgba(255,255,255,0.05)';
+          ctx.lineWidth = isActive ? 2.5 : 1;
+        } else {
+          ctx.strokeStyle = mode === 'perm' ? 'rgba(244, 63, 94, 0.25)' : 'rgba(59, 130, 246, 0.25)';
+          ctx.lineWidth = 1.5;
+        }
+        ctx.stroke();
+      });
+
+      // Draw Animated Particles
+      particles.forEach(p => {
+        if (!p.edge.source || !p.edge.target) return;
+        p.progress += p.speed;
+        if (p.progress > 1) p.progress = 0;
+
+        const cpX = (p.edge.source.x + p.edge.target.x) / 2;
+        const t = p.progress;
+
+        // Cubic Bezier interpolation formula
+        const x = Math.pow(1 - t, 3) * p.edge.source.x +
+                  3 * Math.pow(1 - t, 2) * t * cpX +
+                  3 * (1 - t) * Math.pow(t, 2) * cpX +
+                  Math.pow(t, 3) * p.edge.target.x;
+
+        const y = Math.pow(1 - t, 3) * p.edge.source.y +
+                  3 * Math.pow(1 - t, 2) * t * p.edge.source.y +
+                  3 * (1 - t) * Math.pow(t, 2) * p.edge.target.y +
+                  Math.pow(t, 3) * p.edge.target.y;
+
+        ctx.beginPath();
+        ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#38bdf8';
+        ctx.shadowColor = '#38bdf8';
+        ctx.shadowBlur = 6;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      });
+
+      // Draw Neurons / Nodes
+      nodes.forEach(node => {
+        const isActive = active.nodes.has(node.id);
+        const isSelected = selectedNode && selectedNode.id === node.id;
+
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, isSelected ? 10 : 7, 0, Math.PI * 2);
+
+        if (node.layer === 0) ctx.fillStyle = '#38bdf8';
+        else if (node.layer === parseInt(inputR.value)) ctx.fillStyle = '#22c55e';
+        else ctx.fillStyle = '#a855f7';
+
+        if (selectedNode && !isActive) {
+          ctx.fillStyle = '#374151'; // Dim inactive nodes
+        }
+
+        ctx.shadowColor = ctx.fillStyle;
+        ctx.shadowBlur = isSelected ? 15 : 6;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // Label rendering
+        ctx.fillStyle = isSelected ? '#38bdf8' : '#f8fafc';
+        ctx.font = isSelected ? 'bold 12px monospace' : '10px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(node.label, node.x, node.y - 12);
+      });
+
+      ctx.restore();
+    }
+
+    // Continuous Animation Loop for particles
+    function animate() {
+      draw();
+      requestAnimationFrame(animate);
+    }
+
+    // Launch Simulator
+    buildGraph();
+    animate();
+  </script>
+</body>
+</html>
